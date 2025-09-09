@@ -7,7 +7,7 @@ import asyncpg
 app = FastAPI(title="RentUZ MVP", version="0.1.0")
 
 # Render обычно отдаёт DSN как postgres://..., asyncpg нормально ест и postgres:// и postgresql://
-DB_URL = os.getenv("DATABASE_URL")  # добавим на Шаге 3
+DB_URL = _dsn_fix(os.getenv("DATABASE_URL"))
 
 @app.get("/health")
 async def health():
