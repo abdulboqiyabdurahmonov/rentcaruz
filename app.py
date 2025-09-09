@@ -1,12 +1,20 @@
 import os
 import asyncio
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 import asyncpg
 
 app = FastAPI(title="RentUZ MVP", version="0.1.0")
 
-# Render обычно отдаёт DSN как postgres://..., asyncpg нормально ест и postgres:// и postgresql://
+# --- ВАЖНО: сначала объявляем функцию, потом используем ---
+def _dsn_fix(url: str | None) -> str | None:
+    if not url:
+        return url
+    # Render иногда даёт postgres:// — asyncpg любит postgresql://
+    if url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://"):]
+    return url
+
 DB_URL = _dsn_fix(os.getenv("DATABASE_URL"))
 
 @app.get("/health")
