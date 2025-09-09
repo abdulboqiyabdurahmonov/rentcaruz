@@ -114,3 +114,98 @@ async def list_cars(
     async with app.state.pool.acquire() as conn:
         rows = await conn.fetch(" ".join(sql), *args)
     return [dict(r) for r in rows]
+
+from fastapi import Request
+
+def _dsn_fix(url: str | None) -> str | None:
+    if not url:
+        return url
+    # На всякий случай чиним схему postgres:// -> postgresql://
+    if url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://"):]
+    return url
+
+@app.get("/admin/seed")
+async def admin_seed(request: Request):
+    seed_token_env = os.getenv("SEED_TOKEN")
+    token = request.query_params.get("token")
+    if not seed_token_env:
+        raise HTTPException(status_code=500, detail="SEED_TOKEN env not set")
+    if token != seed_token_env:
+        raise HTTPException(status_code=401, detail="bad token")
+
+    # Если пул ещё не создан (например, забыли DATABASE_URL) — скажем об этом:
+    if not getattr(app.state, "pool", None):
+        return {"ok": False, "error": "DB pool is not initialized. Check DATABASE_URL."}
+
+    # Вставляем одного партнёра и пару машин.
+    async with app.state.pool.acquire() as conn:
+        # партнёр
+        p = await conn.fetchrow(
+            """
+            INSERT INTO partners (name, slug, site_url, city, phone, commission_pct)
+            VALUES ($1,$2,$3,$4,$5,$6)
+            ON CONFLICT (slug) DO UPDATE SET
+              name=EXCLUDED.name, site_url=EXCLUDED.site_url, city=EXCLUDED.city,
+              phone=EXCLUDED.phone, commission_pct=EXCLUDED.commission_pct
+            RETURNING id;
+            """,
+            "Demo Rent", "demo-rent", "https://demo-rent.example", "Tashkent", "+998 90 000 00 00", 0
+        )
+        partner_id = p["id"]
+
+        # машины (idempotent через (partner_id, external_id))
+        car1 = await conn.fetchrow(
+            """
+            INSERT INTO cars (partner_id, external_id, title, brand, model, year, class,
+                              transmission, fuel, seats, city, price_per_day, currency,
+                              deposit, deposit_currency, with_driver, free_km_per_day,
+                              photos, conditions, source_url, available, updated_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,
+                    $8,$9,$10,$11,$12,$13,
+                    $14,$15,$16,$17,
+                    $18::jsonb,$19::jsonb,$20,$21, now())
+            ON CONFLICT (partner_id, external_id) DO UPDATE SET
+              title=EXCLUDED.title, brand=EXCLUDED.brand, model=EXCLUDED.model, year=EXCLUDED.year,
+              class=EXCLUDED.class, transmission=EXCLUDED.transmission, fuel=EXCLUDED.fuel,
+              seats=EXCLUDED.seats, city=EXCLUDED.city, price_per_day=EXCLUDED.price_per_day,
+              currency=EXCLUDED.currency, deposit=EXCLUDED.deposit, deposit_currency=EXCLUDED.deposit_currency,
+              with_driver=EXCLUDED.with_driver, free_km_per_day=EXCLUDED.free_km_per_day,
+              photos=EXCLUDED.photos, conditions=EXCLUDED.conditions, source_url=EXCLUDED.source_url,
+              available=EXCLUDED.available, updated_at=now()
+            RETURNING id;
+            """,
+            partner_id, "demo-001", "Chevrolet Cobalt", "Chevrolet", "Cobalt", 2021, "economy",
+            "AT", "petrol", 5, "Tashkent", 250000, "UZS",
+            3000000, "UZS", False, 200,
+            ["https://picsum.photos/seed/cobalt/800/400"], {"delivery": "on request"}, "https://demo-rent.example/cobalt", True
+        )
+
+        car2 = await conn.fetchrow(
+            """
+            INSERT INTO cars (partner_id, external_id, title, brand, model, year, class,
+                              transmission, fuel, seats, city, price_per_day, currency,
+                              deposit, deposit_currency, with_driver, free_km_per_day,
+                              photos, conditions, source_url, available, updated_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,
+                    $8,$9,$10,$11,$12,$13,
+                    $14,$15,$16,$17,
+                    $18::jsonb,$19::jsonb,$20,$21, now())
+            ON CONFLICT (partner_id, external_id) DO UPDATE SET
+              title=EXCLUDED.title, brand=EXCLUDED.brand, model=EXCLUDED.model, year=EXCLUDED.year,
+              class=EXCLUDED.class, transmission=EXCLUDED.transmission, fuel=EXCLUDED.fuel,
+              seats=EXCLUDED.seats, city=EXCLUDED.city, price_per_day=EXCLUDED.price_per_day,
+              currency=EXCLUDED.currency, deposit=EXCLUDED.deposit, deposit_currency=EXCLUDED.deposit_currency,
+              with_driver=EXCLUDED.with_driver, free_km_per_day=EXCLUDED.free_km_per_day,
+              photos=EXCLUDED.photos, conditions=EXCLUDED.conditions, source_url=EXCLUDED.source_url,
+              available=EXCLUDED.available, updated_at=now()
+            RETURNING id;
+            """,
+            partner_id, "demo-002", "Chevrolet Malibu", "Chevrolet", "Malibu", 2022, "comfort",
+            "AT", "petrol", 5, "Tashkent", 400000, "UZS",
+            5000000, "UZS", True, 250,
+            ["https://picsum.photos/seed/malibu/800/400"], {"driver_included": True}, "https://demo-rent.example/malibu", True
+        )
+
+    return {"ok": True, "partner_id": partner_id, "cars": [car1["id"], car2["id"]]}
+
